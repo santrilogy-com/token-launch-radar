@@ -18,20 +18,22 @@
 <main>
   <section class="panel" id="model-panel">
     <h2>How the value is worked out</h2>
-    <p>Implied value = TVL &times; base multiple &times; growth &times; maturity &times; chain spread &times; TVL slope.
+    <p>Implied value = TVL &times; base multiple &times; growth &times; maturity &times; chain spread &times; TVL slope &times; level.
     The base multiple is calibrated per category from the live-token protocols in this same
-    snapshot: the median market-cap-to-TVL ratio of the protocols in that category that already
-    trade, winsorized to the 5th&ndash;95th percentiles first (the raw ratios run from 0 to 400&times;)
-    and then shrunk toward the global median with k&nbsp;=&nbsp;3 comparables, so a category with few
-    live comparables is pulled toward the global instead of trusting a thin median, then clamped to
-    0.05&ndash;0.60. Maturity is a
+    snapshot: the trimmed geometric mean (10% trimmed each tail) of the market-cap-to-TVL
+    ratios of the protocols in that category that already trade, winsorized to the
+    5th&ndash;95th percentiles first (the raw ratios run from 0 to 400&times;)
+    and then shrunk toward the global centre with k&nbsp;=&nbsp;3 comparables, so a category with few
+    live comparables is pulled toward the global instead of trusting a thin centre, then clamped to
+    0.05&ndash;0.60. The level factor is fitted from the same live comparables, each priced with
+    itself left out, so the median comparable is priced at its actual market cap. Maturity is a
     log curve centred at 1.0 for a one-year-old protocol. The TVL slope is fitted from the same
     live comparables: the market pays less per TVL dollar to bigger protocols. Nothing here is a
     hard-coded list of names, and a protocol that records a token already is never ranked &mdash; it
     is shown apart, at the market&rsquo;s own value.</p>
     <p class="note" id="tvl-note"></p>
     <table class="calib" id="calib-table">
-      <thead><tr><th>Category</th><th class="num">Live comps</th><th class="num">Median mcap / TVL</th><th class="num">Base multiple</th></tr></thead>
+      <thead><tr><th>Category</th><th class="num">Live comps</th><th class="num">Centre mcap / TVL</th><th class="num">Base multiple</th></tr></thead>
       <tbody></tbody>
     </table>
     <p class="note">Implied values are this entry&rsquo;s own claim from the sealed snapshot, never a
@@ -86,7 +88,7 @@
 </main>
 
 <footer>
-  <p>Snapshot <span id="asof"></span> &middot; Source: <span id="src"></span> &middot; Model radar-v2-calibrated</p>
+  <p>Snapshot <span id="asof"></span> &middot; Source: <span id="src"></span> &middot; Model radar-v3-trimmed-level</p>
 </footer>
 <script src="../data.js"></script>
 <script src="app.js"></script>

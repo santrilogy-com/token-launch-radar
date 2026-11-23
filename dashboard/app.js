@@ -30,12 +30,12 @@
   // ---- calibration table (top 12 categories by comps, then the rest by name)
   var cal = R.calibration.slice().sort(function (a, b) { return b.comps - a.comps || (a.category < b.category ? -1 : 1); }).slice(0, 12);
   document.querySelector('#calib-table tbody').innerHTML = cal.map(function (c) {
-    return '<tr><td>' + esc(c.category) + '</td><td class="num">' + c.comps + '</td><td class="num">' + c.median_ratio.toFixed(3) + '</td><td class="num">' + c.base_multiple.toFixed(3) + '</td></tr>';
-  }).join('') + '<tr><td colspan="4" class="note">Median is winsorized to the 5th&ndash;95th percentiles, then shrunk toward the global median ' + R.global_multiple.toFixed(3) + ' (k = ' + R.model.shrink_k + '). Full table: ' + R.calibration.length + ' categories.</td></tr>';
+    return '<tr><td>' + esc(c.category) + '</td><td class="num">' + c.comps + '</td><td class="num">' + c.center_ratio.toFixed(3) + '</td><td class="num">' + c.base_multiple.toFixed(3) + '</td></tr>';
+  }).join('') + '<tr><td colspan="4" class="note">Centre ratio is the trimmed geometric mean of the winsorized comparables (10% trimmed each tail), then shrunk toward the global centre ' + R.global_multiple.toFixed(3) + ' (k = ' + R.model.shrink_k + '). Level factor ' + R.level_factor.toFixed(2) + ' centres the median comparable on its market cap. Full table: ' + R.calibration.length + ' categories.</td></tr>';
   document.getElementById('tvl-note').textContent = 'TVL slope \u03b2 = ' + R.tvl_beta.toFixed(2) +
     ' fitted from the live comparables (bigger protocols earn less per TVL dollar), reference TVL ' +
     fmtUsd(R.tvl_ref_usd) + '. Backtest over the snapshot\u2019s live-token protocols (leave-one-out): ' +
-    'median error 87% vs 92% for the v1 model, 27% of predictions within 2\u00d7 of the real market cap vs 23%.';
+    'median error 86% vs 87% for the v2 model, 29% of predictions within 2\u00d7 of the real market cap vs 27%.';
 
   // ---- filter controls
   var cats = Array.from(new Set(R.rows.map(function (r) { return r.category || '(no category)'; }))).sort();
@@ -100,26 +100,31 @@
     d.hidden = false;
     document.getElementById('detail-title').textContent = '#' + r.rank + ' — ' + r.name;
     var base = r.tvl_usd * r.base_multiple;
-    var maxLog = Math.log10(Math.max(r.tvl_usd, r.implied_value_usd));
-    var barW = function (v) { return Math.max(2, Math.round((Math.log10(Math.max(v, 1)) / maxLog) * 100)); };
     var catRow = null;
     for (var i = 0; i < R.calibration.length; i++) { if (R.calibration[i].category === (r.category || '(no category)')) { catRow = R.calibration[i]; break; } }
     var impliedPerTvl = r.implied_value_usd / r.tvl_usd;
+    // Ratio bars on one linear scale: this row's implied value per TVL
+    // dollar against its category's centre ratio. A real gap reads as a
+    // real gap — the v2 log-scaled TVL-vs-implied bars were nearly the same
+    // length for every row and carried no comparison.
+    var maxRatio = Math.max(impliedPerTvl, catRow ? catRow.center_ratio : 0, 0.001);
+    var barW = function (v) { return Math.max(2, Math.round((v / maxRatio) * 100)); };
     document.getElementById('detail-body').innerHTML =
       '<p>' + esc(r.category || 'No category') + ' &middot; ' + esc(r.chains.join(', ')) +
       ' &middot; TVL ' + fmtUsd(r.tvl_usd) + ' &middot; 7-day ' + fmtPct(r.change_7d) +
       ' &middot; listed ' + (r.listed_at || 'unknown') + ' (' + fmtAge(r.age_days) + ') &middot; records no token.</p>' +
       '<div class="bars">' +
-      '<div class="bar-row"><span class="lbl">TVL</span><span class="track"><span class="fill" style="width:' + barW(r.tvl_usd) + '%"></span></span><span class="val">' + fmtUsd(r.tvl_usd) + '</span></div>' +
-      '<div class="bar-row"><span class="lbl">Implied value</span><span class="track"><span class="fill impl" style="width:' + barW(r.implied_value_usd) + '%"></span></span><span class="val">' + fmtUsd(r.implied_value_usd) + '</span></div>' +
-      '</div><p class="note">Bars are log-scaled, so a 10&times; gap reads as a fixed step, not a sliver.</p>' +
-      (catRow ? '<p class="vs">Category median mcap / TVL <b>' + catRow.median_ratio.toFixed(3) + '</b> (' + catRow.comps + ' live comps) &mdash; this row&rsquo;s implied / TVL <b>' + impliedPerTvl.toFixed(3) + '&times;</b>.</p>' : '') +
+      '<div class="bar-row"><span class="lbl">This row</span><span class="track"><span class="fill impl" style="width:' + barW(impliedPerTvl) + '%"></span></span><span class="val">' + impliedPerTvl.toFixed(3) + '&times; TVL</span></div>' +
+      (catRow ? '<div class="bar-row"><span class="lbl">Category centre</span><span class="track"><span class="fill" style="width:' + barW(catRow.center_ratio) + '%"></span></span><span class="val">' + catRow.center_ratio.toFixed(3) + '&times; TVL</span></div>' : '') +
+      '</div><p class="note">Bars compare value per TVL dollar on one linear scale. TVL ' + fmtUsd(r.tvl_usd) + ' &middot; implied value ' + fmtUsd(r.implied_value_usd) + '.</p>' +
+      (catRow ? '<p class="vs">Category centre mcap / TVL <b>' + catRow.center_ratio.toFixed(3) + '</b> (' + catRow.comps + ' live comps) &mdash; this row&rsquo;s implied / TVL <b>' + impliedPerTvl.toFixed(3) + '&times;</b>.</p>' : '') +
       '<div class="model-line">' +
       '<span class="chip">TVL &times; base <b>' + fmtUsd(r.tvl_usd) + ' &times; ' + r.base_multiple.toFixed(3) + ' = ' + fmtUsd(base) + '</b></span>' +
       '<span class="chip">growth <b>&times; ' + r.growth_multiplier.toFixed(2) + '</b></span>' +
       '<span class="chip">maturity <b>&times; ' + r.maturity_multiplier.toFixed(2) + '</b></span>' +
       '<span class="chip">chains &times; ' + r.chains.length + ' <b>&times; ' + r.chain_multiplier.toFixed(2) + '</b></span>' +
       '<span class="chip">TVL slope <b>&times; ' + r.tvl_multiplier.toFixed(2) + '</b></span>' +
+      '<span class="chip">level <b>&times; ' + R.level_factor.toFixed(2) + '</b></span>' +
       '<span class="chip">implied value <b>' + fmtUsd(r.implied_value_usd) + '</b></span>' +
       '</div>' +
       '<h3>Farm plan</h3><ol class="steps">' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';

@@ -1,27 +1,29 @@
-// Token radar model v2: the implied value of a protocol that records no token.
+// Token radar model v3: the implied value of a protocol that records no token.
 //
 // The model is calibrated on the snapshot itself, not on a hand-written list of
 // names. For every category, the live-token protocols in the same snapshot are
 // the comparables: their market-cap-to-TVL ratio is what the market already
-// pays for a token in that kind of business. Version 2 is fitted against a
+// pays for a token in that kind of business. Version 3 is fitted against a
 // leave-one-out backtest over the snapshot's 144 live-token protocols (see
-// work/backtest-v2.ts): the category median alone did not beat a single
-// global median, so v2 adds three things the backtest shows help —
-// winsorized ratios (the raw ratios run from 0 to 400x, so the 5th and 95th
-// percentiles clip the wild ends before any median is taken), shrinkage of
-// small categories toward the global median (k = 3 comparables, replacing
-// v1's hard fallback cliff), and a TVL slope (the market pays less per TVL
-// dollar to bigger protocols: ln(mcap/TVL) regressed on ln(TVL) over the
-// live comparables gives beta -0.48, clamped to -0.25). Maturity is a log
-// curve, centred at 1.0 for a one-year-old protocol, so it ranks protocols
-// against each other instead of dragging every value down. Every protocol is
-// then scored by the same five factors, all read from its own snapshot record:
+// work/backtest-v3.ts): it keeps v2's winsorized ratios, shrinkage toward
+// the global centre (k = 3), log maturity curve centred at one year, and
+// fitted TVL slope, and changes two things the backtest shows help — the
+// category centre is now the trimmed geometric mean of the winsorized
+// ratios (10% trimmed each tail) instead of the median, because the raw
+// ratios run from 0 to 400x and the median ignores how far the tails sit;
+// and a level factor, fitted leave-one-out from the same comparables, so
+// the median comparable is priced at its actual market cap instead of 8%
+// below it. Backtest (128 protocols, leave-one-out): median error 86% vs
+// 87% for v2, 29% of predictions within 2x of the real market cap vs 27%,
+// median bias +0% vs -8%. Every protocol is then scored by the same six
+// factors, all read from its own snapshot record:
 //
 //   implied = TVL x baseMultiple(category)
 //                 x growthMultiplier(change_7d)
 //                 x maturityMultiplier(age in days)
 //                 x chainSpreadMultiplier(number of chains)
 //                 x tvlMultiplier(TVL vs the median live protocol)
+//                 x levelFactor(fitted from the live comparables)
 //
 // A protocol that records a token already trades, so the board never ranks
 // one: live-token protocols are shown apart, at the market's own value.
@@ -89,7 +91,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-v2-calibrated';
+export const MODEL_VERSION = 'radar-v3-trimmed-level';
 
 /** How many pre-token protocols below the watchlist floor the early radar carries, by TVL. */
 export const EARLY_ROWS = 160;
@@ -169,7 +171,7 @@ export interface LiveRow {
 export interface CalibrationRow {
   category: string;
   comps: number;
-  median_ratio: number;
+  center_ratio: number;
   base_multiple: number;
   fallback: boolean;
 }
@@ -189,6 +191,7 @@ export interface RadarData {
   global_multiple: number;
   tvl_beta: number;
   tvl_ref_usd: number;
+  level_factor: number;
   rows: RadarRow[];
   live: LiveRow[];
 }
@@ -221,6 +224,23 @@ function quantile(values: number[], q: number): number {
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(q * sorted.length)))]!;
 }
 
+/**
+ * The trimmed geometric mean: the geometric mean of the middle 80% (10%
+ * trimmed each tail). For ratios that run from 0 to 400x, the median
+ * ignores how far the tails sit; the trimmed geometric mean keeps the
+ * centre while the wild ends cannot set it. Falls back to the median when
+ * no positive ratio survives the trim.
+ */
+function trimmedGeomean(values: number[]): number {
+  if (values.length === 0) return NaN;
+  const sorted = [...values].sort((a, b) => a - b);
+  const trim = Math.floor(sorted.length * 0.1);
+  const kept = sorted.slice(trim, sorted.length - trim);
+  const logs = kept.filter((r) => r > 0).map((r) => Math.log(r));
+  if (logs.length === 0) return median(values);
+  return Math.exp(logs.reduce((a, b) => a + b, 0) / logs.length);
+}
+
 /** One category's calibration: the comparables behind its base multiple. */
 export interface Calibration {
   byCategory: Map<string, number>;
@@ -230,6 +250,7 @@ export interface Calibration {
   tvlRefUsd: number;
   winsorLo: number;
   winsorHi: number;
+  levelFactor: number;
 }
 
 /** A whole day count from `from` to `to`, clamped at zero; null when either date is absent or bad. */
@@ -259,19 +280,26 @@ export function isRankable(p: SnapshotProtocol): boolean {
  * protocols, and fit the TVL slope from the same comparables. Each live
  * protocol contributes its market-cap-to-TVL ratio, winsorized to the
  * global 5th–95th percentiles first: the raw ratios run from 0 to 400x, so
- * one wild ratio must not set a category's price. The category's multiple is
- * its winsorized median shrunk toward the global median with k = 3
- * comparables — a category with many comps keeps its own median, one with
- * few is pulled toward the global, with no hard fallback cliff. The TVL
- * slope is the OLS slope of ln(ratio) on ln(TVL) over the comparables with
- * a positive ratio (a recorded cap of 0 cannot be logged), clamped to
- * +/- tvl_beta_cap: the market pays less per TVL dollar to bigger
- * protocols, and the slope is fitted here, from this snapshot, never
- * hand-written. The table is returned so the dashboard can show its work.
+ * one wild ratio must not set a category's price. The category's centre is
+ * the trimmed geometric mean of its winsorized ratios (10% trimmed each
+ * tail), shrunk toward the global centre with k = 3 comparables — a
+ * category with many comps keeps its own centre, one with few is pulled
+ * toward the global, with no hard fallback cliff. The TVL slope is the OLS
+ * slope of ln(ratio) on ln(TVL) over the comparables with a positive ratio
+ * (a recorded cap of 0 cannot be logged), clamped to +/- tvl_beta_cap: the
+ * market pays less per TVL dollar to bigger protocols, and the slope is
+ * fitted here, from this snapshot, never hand-written. The table is returned
+ * so the dashboard can show its work.
+ *
+ * `excludeSlug` leaves one comparable out of the pool: the level factor in
+ * `calibrate` prices every live comparable with itself left out, so no
+ * protocol ever sets its own price. The core calibration carries
+ * levelFactor 1, a neutral factor the wrapper replaces with the fitted one.
  */
-export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Calibration {
+export function calibrateCore(snapshot: Snapshot, model: ModelConstants = MODEL, excludeSlug: string | null = null): Calibration {
   const comps: { ratio: number; tvl: number; category: string }[] = [];
   for (const p of snapshot.protocols) {
+    if (p.slug === excludeSlug) continue;
     if (p.mcap_usd === null || p.tvl_usd <= 0) continue;
     const ratio = p.mcap_usd / p.tvl_usd;
     if (!Number.isFinite(ratio) || ratio < 0) continue;
@@ -282,7 +310,7 @@ export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Ca
   const winsorLo = allRatios.length > 0 ? quantile(allRatios, model.winsor_lo) : 0;
   const winsorHi = allRatios.length > 0 ? quantile(allRatios, model.winsor_hi) : 1;
   const win = (r: number): number => Math.min(winsorHi, Math.max(winsorLo, r));
-  const global = clamp(allRatios.length > 0 ? median(allRatios.map(win)) : 0.25);
+  const global = clamp(allRatios.length > 0 ? trimmedGeomean(allRatios.map(win)) : 0.25);
   const byCat = new Map<string, number[]>();
   for (const c of comps) {
     const list = byCat.get(c.category) ?? [];
@@ -292,10 +320,10 @@ export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Ca
   const byCategory = new Map<string, number>();
   const table: CalibrationRow[] = [];
   for (const [cat, ratios] of [...byCat.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-    const med = median(ratios);
-    const shrunk = (ratios.length * med + model.shrink_k * global) / (ratios.length + model.shrink_k);
+    const centre = trimmedGeomean(ratios);
+    const shrunk = (ratios.length * centre + model.shrink_k * global) / (ratios.length + model.shrink_k);
     byCategory.set(cat, clamp(shrunk));
-    table.push({ category: cat, comps: ratios.length, median_ratio: round4(med), base_multiple: clamp(shrunk), fallback: false });
+    table.push({ category: cat, comps: ratios.length, center_ratio: round4(centre), base_multiple: clamp(shrunk), fallback: false });
   }
   // TVL slope: ln(ratio) on ln(TVL), positive ratios only, clamped.
   const fitted = comps.filter((c) => c.ratio > 0);
@@ -315,7 +343,30 @@ export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Ca
   }
   beta = Math.min(model.tvl_beta_cap, Math.max(-model.tvl_beta_cap, beta));
   const tvlRefUsd = comps.length > 0 ? median(comps.map((c) => c.tvl)) : 1;
-  return { byCategory, global, table, tvlBeta: beta, tvlRefUsd, winsorLo, winsorHi };
+  return { byCategory, global, table, tvlBeta: beta, tvlRefUsd, winsorLo, winsorHi, levelFactor: 1 };
+}
+
+/**
+ * The full calibration: the core calibration plus a level factor fitted
+ * leave-one-out from the snapshot's own live comparables. Each comparable
+ * is priced with itself left out of the pool; the factor is one over the
+ * median predicted-to-actual ratio, so the median comparable is priced at
+ * its actual market cap instead of below it. The factor is a calibration
+ * constant from this snapshot, like the global centre — it uses no
+ * information about the pre-token protocols being scored.
+ */
+export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Calibration {
+  const core = calibrateCore(snapshot, model);
+  const ratiosPA: number[] = [];
+  for (const p of snapshot.protocols) {
+    if (p.mcap_usd === null || p.mcap_usd <= 0 || p.tvl_usd <= 0) continue;
+    const calExcl = calibrateCore(snapshot, model, p.slug);
+    const v = impliedValue(p, snapshot.as_of, calExcl, model);
+    ratiosPA.push(v.implied / p.mcap_usd);
+  }
+  const level = ratiosPA.length > 0 ? median(ratiosPA) : 1;
+  const levelFactor = Number.isFinite(level) && level > 0 ? 1 / level : 1;
+  return { ...core, levelFactor };
 }
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
@@ -335,7 +386,7 @@ export function maturityMultiplier(age: number | null, model: ModelConstants = M
   return curve(a) / curve(model.maturity_ref_days);
 }
 
-/** The five multipliers and the implied value one protocol gets under the calibrated model. */
+/** The six multipliers and the implied value one protocol gets under the calibrated model. */
 export function impliedValue(
   protocol: SnapshotProtocol,
   asOf: string,
@@ -352,7 +403,7 @@ export function impliedValue(
   const chainMult = 1 + spread * model.chain_step;
   const tvlMult = (protocol.tvl_usd / cal.tvlRefUsd) ** cal.tvlBeta;
   const base = protocol.tvl_usd * baseMultiple;
-  const implied = Math.max(1, Math.round(base * growthMult * maturityMult * chainMult * tvlMult));
+  const implied = Math.max(1, Math.round(base * growthMult * maturityMult * chainMult * tvlMult * cal.levelFactor));
   return { implied, baseMultiple, growthPct, growthMult, maturityMult, chainMult, tvlMult, age };
 }
 
@@ -362,7 +413,7 @@ function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
 }
 
 /** The protocols the board ranks, strongest first, with ranks 1..n. */
-export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; calibration: CalibrationRow[]; globalMultiple: number; tvlBeta: number; tvlRefUsd: number } {
+export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; calibration: CalibrationRow[]; globalMultiple: number; tvlBeta: number; tvlRefUsd: number; levelFactor: number } {
   const cal = calibrate(snapshot, model);
   const index = bySlug(snapshot.protocols);
   const chosen = new Map<string, SnapshotProtocol>();
@@ -409,7 +460,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): {
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
   }));
-  return { board, calibration: cal.table, globalMultiple: cal.global, tvlBeta: cal.tvlBeta, tvlRefUsd: cal.tvlRefUsd };
+  return { board, calibration: cal.table, globalMultiple: cal.global, tvlBeta: cal.tvlBeta, tvlRefUsd: cal.tvlRefUsd, levelFactor: cal.levelFactor };
 }
 
 /** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
@@ -651,7 +702,7 @@ export function radarRow(row: BoardRow, watchlist: Set<string>): RadarRow {
 
 /** Everything the dashboard renders, from the snapshot. */
 export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
-  const { board, calibration, globalMultiple, tvlBeta, tvlRefUsd } = buildBoard(snapshot, model);
+  const { board, calibration, globalMultiple, tvlBeta, tvlRefUsd, levelFactor } = buildBoard(snapshot, model);
   const live = liveRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
   const radar: RadarData = {
@@ -668,6 +719,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     global_multiple: globalMultiple,
     tvl_beta: tvlBeta,
     tvl_ref_usd: tvlRefUsd,
+    level_factor: levelFactor,
     rows: board.map((r) => radarRow(r, new Set(snapshot.watchlist))),
     live,
   };

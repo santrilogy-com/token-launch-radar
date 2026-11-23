@@ -1,4 +1,4 @@
-// Token Launch Radar v2 — entrypoint (Node 22, standard library only).
+// Token Launch Radar v3 — entrypoint (Node 22, standard library only).
 //
 // Reads the sealed DefiLlama snapshot from /input/snapshot.json (or
 // --input <snapshot.json|directory>), scores every pre-token protocol with
@@ -8,10 +8,12 @@
 // writes /output/dossier.json with the vendored make.fun library, so the
 // scorer can rebuild it byte for byte.
 //
-// v2 model (radar-v2-calibrated): winsorized category medians with shrinkage
-// toward the global median, a log maturity curve centred at one year, and a
-// TVL slope fitted from the snapshot's own live-token comparables — see
-// lib/model.ts and BUILD-v2.md for the leave-one-out backtest behind it.
+// v3 model (radar-v3-trimmed-level): trimmed geometric mean of the winsorized
+// category ratios with shrinkage toward the global centre, a log maturity
+// curve centred at one year, a TVL slope fitted from the snapshot's own
+// live-token comparables, and a leave-one-out level factor that centres the
+// median comparable on its actual market cap — see lib/model.ts and
+// BUILD-v3.md for the leave-one-out backtest behind it.
 //
 // Run locally the same way the grader runs it, with MAKEFUN_OUTPUT_DIR:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
