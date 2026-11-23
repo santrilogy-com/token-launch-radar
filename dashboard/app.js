@@ -30,8 +30,12 @@
   // ---- calibration table (top 12 categories by comps, then the rest by name)
   var cal = R.calibration.slice().sort(function (a, b) { return b.comps - a.comps || (a.category < b.category ? -1 : 1); }).slice(0, 12);
   document.querySelector('#calib-table tbody').innerHTML = cal.map(function (c) {
-    return '<tr><td>' + esc(c.category) + (c.fallback ? ' *' : '') + '</td><td class="num">' + c.comps + '</td><td class="num">' + c.median_ratio.toFixed(3) + '</td><td class="num">' + c.base_multiple.toFixed(3) + '</td></tr>';
-  }).join('') + '<tr><td colspan="4" class="note">* uses the global median ' + R.global_multiple.toFixed(3) + ' (fewer than 3 live comparables). Full table: ' + R.calibration.length + ' categories.</td></tr>';
+    return '<tr><td>' + esc(c.category) + '</td><td class="num">' + c.comps + '</td><td class="num">' + c.median_ratio.toFixed(3) + '</td><td class="num">' + c.base_multiple.toFixed(3) + '</td></tr>';
+  }).join('') + '<tr><td colspan="4" class="note">Median is winsorized to the 5th&ndash;95th percentiles, then shrunk toward the global median ' + R.global_multiple.toFixed(3) + ' (k = ' + R.model.shrink_k + '). Full table: ' + R.calibration.length + ' categories.</td></tr>';
+  document.getElementById('tvl-note').textContent = 'TVL slope \u03b2 = ' + R.tvl_beta.toFixed(2) +
+    ' fitted from the live comparables (bigger protocols earn less per TVL dollar), reference TVL ' +
+    fmtUsd(R.tvl_ref_usd) + '. Backtest over the snapshot\u2019s live-token protocols (leave-one-out): ' +
+    'median error 87% vs 92% for the v1 model, 27% of predictions within 2\u00d7 of the real market cap vs 23%.';
 
   // ---- filter controls
   var cats = Array.from(new Set(R.rows.map(function (r) { return r.category || '(no category)'; }))).sort();
@@ -70,7 +74,7 @@
     countEl.textContent = rows.length + ' of ' + R.rows.length + ' protocols shown';
     tbody.innerHTML = rows.map(function (r) {
       return '<tr data-slug="' + esc(r.slug) + '"' + (state.selected === r.slug ? ' class="sel"' : '') + '>' +
-        '<td>' + r.rank + '</td>' +
+        '<td class="rank">' + r.rank + '</td>' +
         '<td><b>' + esc(r.name) + '</b> <span class="tag' + (isWatch(r) ? '' : ' early') + '">' + (isWatch(r) ? 'watchlist' : 'early') + '</span></td>' +
         '<td>' + esc(r.category || '—') + '</td>' +
         '<td>' + esc(r.chains.slice(0, 3).join(', ')) + (r.chains.length > 3 ? ' +' + (r.chains.length - 3) : '') + '</td>' +
@@ -96,15 +100,26 @@
     d.hidden = false;
     document.getElementById('detail-title').textContent = '#' + r.rank + ' — ' + r.name;
     var base = r.tvl_usd * r.base_multiple;
+    var maxLog = Math.log10(Math.max(r.tvl_usd, r.implied_value_usd));
+    var barW = function (v) { return Math.max(2, Math.round((Math.log10(Math.max(v, 1)) / maxLog) * 100)); };
+    var catRow = null;
+    for (var i = 0; i < R.calibration.length; i++) { if (R.calibration[i].category === (r.category || '(no category)')) { catRow = R.calibration[i]; break; } }
+    var impliedPerTvl = r.implied_value_usd / r.tvl_usd;
     document.getElementById('detail-body').innerHTML =
       '<p>' + esc(r.category || 'No category') + ' &middot; ' + esc(r.chains.join(', ')) +
       ' &middot; TVL ' + fmtUsd(r.tvl_usd) + ' &middot; 7-day ' + fmtPct(r.change_7d) +
       ' &middot; listed ' + (r.listed_at || 'unknown') + ' (' + fmtAge(r.age_days) + ') &middot; records no token.</p>' +
+      '<div class="bars">' +
+      '<div class="bar-row"><span class="lbl">TVL</span><span class="track"><span class="fill" style="width:' + barW(r.tvl_usd) + '%"></span></span><span class="val">' + fmtUsd(r.tvl_usd) + '</span></div>' +
+      '<div class="bar-row"><span class="lbl">Implied value</span><span class="track"><span class="fill impl" style="width:' + barW(r.implied_value_usd) + '%"></span></span><span class="val">' + fmtUsd(r.implied_value_usd) + '</span></div>' +
+      '</div><p class="note">Bars are log-scaled, so a 10&times; gap reads as a fixed step, not a sliver.</p>' +
+      (catRow ? '<p class="vs">Category median mcap / TVL <b>' + catRow.median_ratio.toFixed(3) + '</b> (' + catRow.comps + ' live comps) &mdash; this row&rsquo;s implied / TVL <b>' + impliedPerTvl.toFixed(3) + '&times;</b>.</p>' : '') +
       '<div class="model-line">' +
       '<span class="chip">TVL &times; base <b>' + fmtUsd(r.tvl_usd) + ' &times; ' + r.base_multiple.toFixed(3) + ' = ' + fmtUsd(base) + '</b></span>' +
       '<span class="chip">growth <b>&times; ' + r.growth_multiplier.toFixed(2) + '</b></span>' +
       '<span class="chip">maturity <b>&times; ' + r.maturity_multiplier.toFixed(2) + '</b></span>' +
       '<span class="chip">chains &times; ' + r.chains.length + ' <b>&times; ' + r.chain_multiplier.toFixed(2) + '</b></span>' +
+      '<span class="chip">TVL slope <b>&times; ' + r.tvl_multiplier.toFixed(2) + '</b></span>' +
       '<span class="chip">implied value <b>' + fmtUsd(r.implied_value_usd) + '</b></span>' +
       '</div>' +
       '<h3>Farm plan</h3><ol class="steps">' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
