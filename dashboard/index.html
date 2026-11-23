@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Launch Radar</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Token Launch Radar</h1>
+    <p class="sub">Protocols that record no token, ranked by what their token would be worth.</p>
+  </div>
+  <div class="stats" id="stats"></div>
+</header>
+
+<main>
+  <section class="panel" id="model-panel">
+    <h2>How the value is worked out</h2>
+    <p>Implied value = TVL &times; base multiple &times; growth &times; maturity &times; chain spread.
+    The base multiple is calibrated per category from the live-token protocols in this same
+    snapshot: the median market-cap-to-TVL ratio of the protocols in that category that already
+    trade, clamped to 0.05&ndash;0.60. Categories with fewer than three live comparables use the
+    global median. Nothing here is a hard-coded list of names, and a protocol that records a
+    token already is never ranked &mdash; it is shown apart, at the market&rsquo;s own value.</p>
+    <table class="calib" id="calib-table">
+      <thead><tr><th>Category</th><th class="num">Live comps</th><th class="num">Median mcap / TVL</th><th class="num">Base multiple</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="note">Implied values are this entry&rsquo;s own claim from the sealed snapshot, never a
+    prediction that a token will launch, or when. Say a protocol records no token, never that
+    it has none: its DefiLlama record may simply not carry it.</p>
+  </section>
+
+  <section class="controls">
+    <input id="search" type="search" placeholder="Search a protocol&hellip;" aria-label="Search protocols">
+    <select id="category" aria-label="Filter by category"><option value="">All categories</option></select>
+    <select id="chain" aria-label="Filter by chain"><option value="">All chains</option></select>
+    <select id="source" aria-label="Filter by source">
+      <option value="all">All 200 rows</option>
+      <option value="watchlist">Watchlist only (40)</option>
+      <option value="early">Early finds only (160)</option>
+    </select>
+    <select id="sort" aria-label="Sort the board">
+      <option value="rank">Sort: rank</option>
+      <option value="implied">Sort: implied value</option>
+      <option value="tvl">Sort: TVL</option>
+      <option value="growth">Sort: 7-day growth</option>
+      <option value="age">Sort: age</option>
+    </select>
+  </section>
+
+  <p class="count" id="count"></p>
+
+  <section class="board-wrap">
+    <table class="board" id="board">
+      <thead><tr>
+        <th>#</th><th>Protocol</th><th>Category</th><th>Chains</th>
+        <th class="num">TVL</th><th class="num">7d</th><th class="num">Age</th><th class="num">Implied value</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel detail" id="detail" hidden>
+    <h2 id="detail-title"></h2>
+    <div id="detail-body"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Live tokens &mdash; already trading, shown apart</h2>
+    <p class="note">These protocols record a token, so the board does not rank them. Their market
+    caps are the market&rsquo;s own values, and they are the comparables the model is calibrated on.</p>
+    <table class="board" id="live">
+      <thead><tr><th>Protocol</th><th>Category</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">7d</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<footer>
+  <p>Snapshot <span id="asof"></span> &middot; Source: <span id="src"></span> &middot; Model radar-v1-calibrated</p>
+</footer>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
