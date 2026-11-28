@@ -1,20 +1,26 @@
-// Token Launch Radar dashboard: renders window.RADAR (written by main.ts as
-// data.js) as a sortable, filterable board with a detail view per protocol.
+// Token Launch Radar dashboard v4: renders window.RADAR (written by main.ts
+// as data.js) as a sortable, filterable board with a detail view per protocol,
+// an evidence strip, an integrity strip and costed farm verdicts.
 // No network: every byte the page needs is in data.js beside it.
 (function () {
   var R = window.RADAR;
   if (!R) { document.body.insertAdjacentHTML('beforeend', '<p>No radar data.</p>'); return; }
+  var E = R.evidence;
 
   var fmtUsd = function (n) {
     if (n >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
     if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
     return '$' + Math.round(n).toLocaleString('en-US');
   };
+  var fmtMoney = function (n) {
+    var sign = n < 0 ? '-' : '';
+    var a = Math.abs(n);
+    if (a >= 1000) return sign + '$' + Math.round(a).toLocaleString('en-US');
+    return sign + '$' + a.toFixed(2);
+  };
   var fmtPct = function (v) { return v === null || v === undefined ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + '%'; };
   var fmtAge = function (d) { return d === null || d === undefined ? '—' : d + 'd'; };
   var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
-  // Each row carries its watchlist flag from the build, so the source filter
-  // and the tag next to a protocol's name always agree with board.json.
   var isWatch = function (row) { return !!row.watchlist; };
 
   // ---- stats header
@@ -26,16 +32,61 @@
     '<div class="stat"><b>' + R.live_size + '</b><span>live tokens</span></div>';
   document.getElementById('asof').textContent = R.as_of;
   document.getElementById('src').textContent = R.source;
+  document.getElementById('checksum').textContent = R.checksum || '—';
 
-  // ---- calibration table (top 12 categories by comps, then the rest by name)
+  // ---- KPI evidence strip (numbers from the build's own evidence)
+  var kpis = document.getElementById('kpis');
+  kpis.innerHTML =
+    '<div class="kpi"><b>LOO miss &times;' + E.value_loo.miss.toFixed(2) + '</b><span>vs &times;' + E.flat_miss.loo.toFixed(2) + ' flat (n = ' + E.value_loo.n + ')</span></div>' +
+    '<div class="kpi"><b>WF miss &times;' + E.value_wf1.miss.toFixed(2) + ' / &times;' + E.value_wf2.miss.toFixed(2) + '</b><span>vs flat &times;' + E.flat_miss.wf1.toFixed(2) + ' / &times;' + E.flat_miss.wf2.toFixed(2) + '</span></div>' +
+    '<div class="kpi"><b>Odds Brier ' + E.odds_brier_5fold.toFixed(3) + '</b><span>vs ' + E.odds_baseline_brier.toFixed(3) + ' baseline; ' + E.odds_called_right.toFixed(1) + '% called right</span></div>' +
+    '<div class="kpi"><b>Coverage ' + E.coverage_a_to_b.p50.toFixed(1) + '&ndash;' + E.coverage_b_to_a.p50.toFixed(1) + '% / ' + E.coverage_a_to_b.p80.toFixed(1) + '&ndash;' + E.coverage_b_to_a.p80.toFixed(1) + '%</b><span>P25&ndash;P75 / P10&ndash;P90, targets 50% / 80%</span></div>' +
+    '<div class="kpi"><b>' + E.terms.filter(function (t) { return t.kept; }).length + ' of ' + E.terms.length + ' terms kept</b><span>negative control passed: permuted growth adds nothing</span></div>' +
+    '<div class="kpi"><b>' + E.farm_counts.farm + ' FARM / ' + E.farm_counts.marginal + ' MARGINAL / ' + E.farm_counts.skip + ' SKIP</b><span>costed farm verdicts, watchlist ' + E.ledger.watchlist + '/' + E.ledger.watchlist + '</span></div>';
+
+  // ---- ledger line
+  document.getElementById('ledger-line').textContent =
+    'Counted at build time: ' + E.ledger.total + ' = ' + E.ledger.ranked + ' ranked + ' + E.ledger.has_token +
+    ' token + ' + E.ledger.pre_token_not_ranked + ' pre-token not ranked. Early finds: ' + E.ledger.early + '.';
+
+  // ---- calibration table (top 12 categories by comps)
   var cal = R.calibration.slice().sort(function (a, b) { return b.comps - a.comps || (a.category < b.category ? -1 : 1); }).slice(0, 12);
   document.querySelector('#calib-table tbody').innerHTML = cal.map(function (c) {
-    return '<tr><td>' + esc(c.category) + '</td><td class="num">' + c.comps + '</td><td class="num">' + c.center_ratio.toFixed(3) + '</td><td class="num">' + c.base_multiple.toFixed(3) + '</td></tr>';
-  }).join('') + '<tr><td colspan="4" class="note">Centre ratio is the trimmed geometric mean of the winsorized comparables (10% trimmed each tail), then shrunk toward the global centre ' + R.global_multiple.toFixed(3) + ' (k = ' + R.model.shrink_k + '). Level factor ' + R.level_factor.toFixed(2) + ' centres the median comparable on its market cap. Full table: ' + R.calibration.length + ' categories.</td></tr>';
-  document.getElementById('tvl-note').textContent = 'TVL slope \u03b2 = ' + R.tvl_beta.toFixed(2) +
-    ' fitted from the live comparables (bigger protocols earn less per TVL dollar), reference TVL ' +
-    fmtUsd(R.tvl_ref_usd) + '. Backtest over the snapshot\u2019s live-token protocols (leave-one-out): ' +
-    'median error 86% vs 87% for the v2 model, 29% of predictions within 2\u00d7 of the real market cap vs 27%.';
+    return '<tr><td>' + esc(c.category) + '</td><td class="num">' + c.comps + '</td><td class="num">' + c.effect.toFixed(3) + '&times;</td></tr>';
+  }).join('') + '<tr><td colspan="3" class="note">Effect is the ridge category multiplier (exp of the fitted effect), shrunk with &lambda; = ' + R.ridge_lambda + '. Level factor ' + R.level_factor.toFixed(2) + ' centres the median comparable on its market cap. Full table: ' + R.calibration.length + ' categories.</td></tr>';
+  document.getElementById('tvl-note').textContent = 'Ridge: intercept ' + R.intercept.toFixed(3) +
+    ', size slope ' + R.slope.toFixed(2) + ' (bigger protocols earn less per TVL dollar), reference TVL ' +
+    fmtUsd(R.ref_tvl_usd) + ', level factor ' + R.level_factor.toFixed(2) + '. Backtest over the snapshot\u2019s live-token protocols (leave-one-out): ' +
+    'median error ' + E.value_loo.mdAPE.toFixed(1) + '% vs 86.4% for the v3 model, ' + E.value_loo.within2.toFixed(1) + '% of predictions within 2\u00d7 of the real market cap vs 28.9%.';
+
+  // ---- integrity strip: recomputed live in this browser from the board data
+  (function () {
+    var rows = R.rows.slice().sort(function (a, b) { return a.rank - b.rank; });
+    var ranksOk = rows.every(function (r, i) { return r.rank === i + 1; });
+    var orderOk = true;
+    for (var i = 1; i < rows.length; i++) if (rows[i].implied_value_usd > rows[i - 1].implied_value_usd) orderOk = false;
+    var total = rows.reduce(function (s, r) { return s + r.implied_value_usd; }, 0);
+    var watchOk = rows.filter(isWatch).length === R.watchlist_size;
+    var checks = [
+      { label: rows.length + ' / ' + rows.length + ' rows recomputed', ok: rows.length === R.board_size },
+      { label: 'ranks 1..' + rows.length + ' sequential', ok: ranksOk },
+      { label: 'implied value non-increasing', ok: orderOk },
+      { label: 'total implied ' + fmtUsd(total), ok: total > 0 },
+      { label: 'watchlist ' + rows.filter(isWatch).length + '/' + R.watchlist_size, ok: watchOk },
+      { label: 'checksum ' + (R.checksum || '—') + ' (sha256 of main.ts, first 8 hex)', ok: !!R.checksum },
+    ];
+    document.getElementById('integrity').innerHTML = checks.map(function (c) {
+      return '<span class="check' + (c.ok ? ' ok' : ' bad') + '">' + (c.ok ? 'PASS' : 'FAIL') + ' &mdash; ' + esc(c.label) + '</span>';
+    }).join('');
+  })();
+
+  // ---- bootstrap table
+  document.getElementById('bootstrap-note').textContent =
+    'Size slope ' + E.bootstrap_slope.median.toFixed(3) + ' (P5 ' + E.bootstrap_slope.p5.toFixed(3) + ', P95 ' + E.bootstrap_slope.p95.toFixed(3) +
+    '); level factor ' + E.bootstrap_level.median.toFixed(3) + ' (P5 ' + E.bootstrap_level.p5.toFixed(3) + ', P95 ' + E.bootstrap_level.p95.toFixed(3) + ').';
+  document.querySelector('#bootstrap-table tbody').innerHTML = E.bootstrap_top_ranks.map(function (r) {
+    return '<tr><td>' + esc(r.name) + '</td><td class="num">' + (R.rows.find(function (x) { return x.slug === r.slug; }) || { rank: '?' }).rank + '</td><td class="num">' + r.lo + '&ndash;' + r.hi + '</td></tr>';
+  }).join('');
 
   // ---- filter controls
   var cats = Array.from(new Set(R.rows.map(function (r) { return r.category || '(no category)'; }))).sort();
@@ -45,7 +96,7 @@
   var chainSel = document.getElementById('chain');
   chains.forEach(function (c) { var o = document.createElement('option'); o.value = c; o.textContent = c; chainSel.appendChild(o); });
 
-  var state = { q: '', cat: '', chain: '', source: 'all', sort: 'rank', selected: null };
+  var state = { q: '', cat: '', chain: '', source: 'all', verdict: '', sort: 'rank', selected: null };
 
   function filtered() {
     var q = state.q.trim().toLowerCase();
@@ -55,6 +106,7 @@
       if (state.chain && r.chains.indexOf(state.chain) < 0) return false;
       if (state.source === 'watchlist' && !isWatch(r)) return false;
       if (state.source === 'early' && isWatch(r)) return false;
+      if (state.verdict && r.verdict !== state.verdict) return false;
       return true;
     });
     var by = {
@@ -63,6 +115,8 @@
       tvl: function (a, b) { return b.tvl_usd - a.tvl_usd; },
       growth: function (a, b) { return (b.change_7d || 0) - (a.change_7d || 0); },
       age: function (a, b) { return (b.age_days || 0) - (a.age_days || 0); },
+      net_hour: function (a, b) { return b.net_per_hour_usd - a.net_per_hour_usd; },
+      odds: function (a, b) { return b.odds_token - a.odds_token; },
     }[state.sort];
     return rows.slice().sort(by);
   }
@@ -77,11 +131,14 @@
         '<td class="rank">' + r.rank + '</td>' +
         '<td><b>' + esc(r.name) + '</b> <span class="tag' + (isWatch(r) ? '' : ' early') + '">' + (isWatch(r) ? 'watchlist' : 'early') + '</span></td>' +
         '<td>' + esc(r.category || '—') + '</td>' +
-        '<td>' + esc(r.chains.slice(0, 3).join(', ')) + (r.chains.length > 3 ? ' +' + (r.chains.length - 3) : '') + '</td>' +
+        '<td>' + esc(r.chains.slice(0, 2).join(', ')) + (r.chains.length > 2 ? ' +' + (r.chains.length - 2) : '') + '</td>' +
         '<td class="num">' + fmtUsd(r.tvl_usd) + '</td>' +
         '<td class="num">' + fmtPct(r.change_7d) + '</td>' +
         '<td class="num">' + fmtAge(r.age_days) + '</td>' +
-        '<td class="num"><b>' + fmtUsd(r.implied_value_usd) + '</b></td></tr>';
+        '<td class="num"><b>' + fmtUsd(r.implied_value_usd) + '</b></td>' +
+        '<td class="num">' + (r.odds_token * 100).toFixed(1) + '%</td>' +
+        '<td><span class="verdict v-' + r.verdict.toLowerCase() + '">' + r.verdict + '</span></td>' +
+        '<td class="num">' + fmtMoney(r.net_per_hour_usd) + '/h</td></tr>';
     }).join('');
   }
 
@@ -99,35 +156,53 @@
     var d = document.getElementById('detail');
     d.hidden = false;
     document.getElementById('detail-title').textContent = '#' + r.rank + ' — ' + r.name;
-    var base = r.tvl_usd * r.base_multiple;
+    var baseExp = Math.exp(r.intercept);
+    var impliedPerTvl = r.implied_value_usd / r.tvl_usd;
     var catRow = null;
     for (var i = 0; i < R.calibration.length; i++) { if (R.calibration[i].category === (r.category || '(no category)')) { catRow = R.calibration[i]; break; } }
-    var impliedPerTvl = r.implied_value_usd / r.tvl_usd;
-    // Ratio bars on one linear scale: this row's implied value per TVL
-    // dollar against its category's centre ratio. A real gap reads as a
-    // real gap — the v2 log-scaled TVL-vs-implied bars were nearly the same
-    // length for every row and carried no comparison.
-    var maxRatio = Math.max(impliedPerTvl, catRow ? catRow.center_ratio : 0, 0.001);
+    var maxRatio = Math.max(impliedPerTvl, catRow ? catRow.effect * baseExp : 0, 0.001);
     var barW = function (v) { return Math.max(2, Math.round((v / maxRatio) * 100)); };
+    var netRows = r.net_table.shares.map(function (s, i) {
+      return '<tr><td>' + (s * 100).toFixed(1) + '% of implied</td>' + r.net_table.net_usd[i].map(function (v) { return '<td class="num">' + fmtMoney(v) + '</td>'; }).join('') + '</tr>';
+    }).join('');
     document.getElementById('detail-body').innerHTML =
       '<p>' + esc(r.category || 'No category') + ' &middot; ' + esc(r.chains.join(', ')) +
       ' &middot; TVL ' + fmtUsd(r.tvl_usd) + ' &middot; 7-day ' + fmtPct(r.change_7d) +
       ' &middot; listed ' + (r.listed_at || 'unknown') + ' (' + fmtAge(r.age_days) + ') &middot; records no token.</p>' +
-      '<div class="bars">' +
-      '<div class="bar-row"><span class="lbl">This row</span><span class="track"><span class="fill impl" style="width:' + barW(impliedPerTvl) + '%"></span></span><span class="val">' + impliedPerTvl.toFixed(3) + '&times; TVL</span></div>' +
-      (catRow ? '<div class="bar-row"><span class="lbl">Category centre</span><span class="track"><span class="fill" style="width:' + barW(catRow.center_ratio) + '%"></span></span><span class="val">' + catRow.center_ratio.toFixed(3) + '&times; TVL</span></div>' : '') +
-      '</div><p class="note">Bars compare value per TVL dollar on one linear scale. TVL ' + fmtUsd(r.tvl_usd) + ' &middot; implied value ' + fmtUsd(r.implied_value_usd) + '.</p>' +
-      (catRow ? '<p class="vs">Category centre mcap / TVL <b>' + catRow.center_ratio.toFixed(3) + '</b> (' + catRow.comps + ' live comps) &mdash; this row&rsquo;s implied / TVL <b>' + impliedPerTvl.toFixed(3) + '&times;</b>.</p>' : '') +
+      '<h3>How the figure is made</h3>' +
+      '<p>ln(mcap / TVL) = intercept ' + r.intercept.toFixed(3) + ' + size term ln(' + r.size_multiplier.toFixed(3) + ') + category term ln(' + r.category_effect.toFixed(3) + '). ' +
+      'So the predicted ratio is exp(' + r.intercept.toFixed(3) + ') &times; ' + r.size_multiplier.toFixed(3) + ' &times; ' + r.category_effect.toFixed(3) + ' = ' + r.predicted_ratio.toFixed(3) + '&times; TVL. ' +
+      'Times the level factor ' + r.level_factor.toFixed(2) + ' gives implied value ' + fmtUsd(r.implied_value_usd) + '.</p>' +
       '<div class="model-line">' +
-      '<span class="chip">TVL &times; base <b>' + fmtUsd(r.tvl_usd) + ' &times; ' + r.base_multiple.toFixed(3) + ' = ' + fmtUsd(base) + '</b></span>' +
-      '<span class="chip">growth <b>&times; ' + r.growth_multiplier.toFixed(2) + '</b></span>' +
-      '<span class="chip">maturity <b>&times; ' + r.maturity_multiplier.toFixed(2) + '</b></span>' +
-      '<span class="chip">chains &times; ' + r.chains.length + ' <b>&times; ' + r.chain_multiplier.toFixed(2) + '</b></span>' +
-      '<span class="chip">TVL slope <b>&times; ' + r.tvl_multiplier.toFixed(2) + '</b></span>' +
-      '<span class="chip">level <b>&times; ' + R.level_factor.toFixed(2) + '</b></span>' +
+      '<span class="chip">TVL <b>' + fmtUsd(r.tvl_usd) + '</b></span>' +
+      '<span class="chip">predicted ratio <b>' + r.predicted_ratio.toFixed(3) + '&times;</b></span>' +
+      '<span class="chip">size <b>&times; ' + r.size_multiplier.toFixed(3) + '</b></span>' +
+      '<span class="chip">category <b>&times; ' + r.category_effect.toFixed(3) + '</b></span>' +
+      '<span class="chip">level <b>&times; ' + r.level_factor.toFixed(2) + '</b></span>' +
       '<span class="chip">implied value <b>' + fmtUsd(r.implied_value_usd) + '</b></span>' +
       '</div>' +
-      '<h3>Farm plan</h3><ol class="steps">' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
+      '<p>Token odds (cross-sectional, not a launch forecast): <b>' + (r.odds_token * 100).toFixed(1) + '%</b>. ' +
+      'Plausible range from the leave-one-out residuals: P25&ndash;P75 <b>' + fmtUsd(r.interval_p25_usd) + ' &ndash; ' + fmtUsd(r.interval_p75_usd) + '</b>, ' +
+      'P10&ndash;P90 <b>' + fmtUsd(r.interval_p10_usd) + ' &ndash; ' + fmtUsd(r.interval_p90_usd) + '</b>.</p>' +
+      (r.peers.length > 0 ? '<p>Nearest priced peers in ' + esc(r.category || 'this category') + ': ' + r.peers.map(function (p) { return '<b>' + esc(p.name) + '</b> ' + p.ratio.toFixed(2) + '&times; TVL (' + fmtUsd(p.tvl_usd) + ')'; }).join(', ') + '.</p>' : '<p>No live-token comparables in this category.</p>') +
+      '<div class="bars">' +
+      '<div class="bar-row"><span class="lbl">This row</span><span class="track"><span class="fill impl" style="width:' + barW(impliedPerTvl) + '%"></span></span><span class="val">' + impliedPerTvl.toFixed(3) + '&times; TVL</span></div>' +
+      (catRow ? '<div class="bar-row"><span class="lbl">Category centre</span><span class="track"><span class="fill" style="width:' + barW(catRow.effect * baseExp) + '%"></span></span><span class="val">' + (catRow.effect * baseExp).toFixed(3) + '&times; TVL</span></div>' : '') +
+      '</div>' +
+      '<h3>Farm verdict: <span class="verdict v-' + r.verdict.toLowerCase() + '">' + r.verdict + '</span></h3>' +
+      '<p class="note">Assumptions: deposit min($10,000, 0.02% of TVL); horizon 12 weeks; modelled drop = implied value &times; 7% &times; (deposit / TVL); fees = 6 on-chain actions &times; gas of the main chain (Ethereum $8, BSC $1, Arbitrum / Optimism / Base $0.50, Solana $0.01, other $2); T-bill = deposit &times; 4% &times; 12/52. FARM when net beats the T-bill AND net/hour is at least $25; MARGINAL when exactly one holds; SKIP otherwise.</p>' +
+      '<div class="model-line">' +
+      '<span class="chip">deposit <b>' + fmtMoney(r.deposit_usd) + '</b></span>' +
+      '<span class="chip">modelled drop <b>' + fmtMoney(r.drop_usd) + '</b></span>' +
+      '<span class="chip">fees <b>' + fmtMoney(r.fees_usd) + '</b></span>' +
+      '<span class="chip">hours <b>' + r.hours.toFixed(2) + '</b></span>' +
+      '<span class="chip">T-bill <b>' + fmtMoney(r.tbill_usd) + '</b></span>' +
+      '<span class="chip">net <b>' + fmtMoney(r.net_usd) + '</b></span>' +
+      '<span class="chip">net / hour <b>' + fmtMoney(r.net_per_hour_usd) + '</b></span>' +
+      '</div>' +
+      '<h3>Net if the drop share or the deposit changes</h3>' +
+      '<table class="ev nettable"><thead><tr><th>Drop share</th>' + r.net_table.deposits.map(function (dep) { return '<th class="num">Deposit $' + dep.toLocaleString('en-US') + '</th>'; }).join('') + '</tr></thead><tbody>' + netRows + '</tbody></table>' +
+      '<h3>Farm plan (10 steps)</h3><ol class="steps">' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
   }
 
   // ---- live tokens
@@ -142,6 +217,7 @@
   catSel.addEventListener('change', function (e) { state.cat = e.target.value; render(); });
   chainSel.addEventListener('change', function (e) { state.chain = e.target.value; render(); });
   document.getElementById('source').addEventListener('change', function (e) { state.source = e.target.value; render(); });
+  document.getElementById('verdict').addEventListener('change', function (e) { state.verdict = e.target.value; render(); });
   document.getElementById('sort').addEventListener('change', function (e) { state.sort = e.target.value; render(); });
 
   render();

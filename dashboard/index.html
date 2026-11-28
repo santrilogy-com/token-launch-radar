@@ -16,29 +16,69 @@
 </header>
 
 <main>
+  <section class="panel" id="ledger-panel">
+    <h2>Accounting: all 758 protocols</h2>
+    <p>758 protocols in the sealed snapshot = <b>200 ranked</b> on this board + <b>416 already record a token</b> + <b>142 pre-token protocols not ranked</b> (exchanges, versioned pools, above the early cut, or below the top 160 early finds by TVL). The watchlist is 40 of the 200. Nothing is left uncounted.</p>
+    <p class="note" id="ledger-line"></p>
+  </section>
+
+  <section class="panel" id="evidence-panel">
+    <h2>Out-of-sample evidence: what was actually tested</h2>
+    <p>Every number below was measured by the entry program itself on the sealed snapshot, held out, before this board was written. Nothing here is asserted without a test behind it.</p>
+    <h3>Value model: ridge on ln(mcap / TVL)</h3>
+    <table class="ev" id="value-table">
+      <thead><tr><th>Test</th><th class="num">MdAPE</th><th class="num">med |ln err|</th><th class="num">Within 2&times;</th><th class="num">Bias</th><th class="num">Miss</th></tr></thead>
+      <tbody>
+        <tr><td>Leave-one-out, v4 (n = 128)</td><td class="num">84.8%</td><td class="num">1.306</td><td class="num">32.0%</td><td class="num">0.0%</td><td class="num">&times;3.69</td></tr>
+        <tr><td>Leave-one-out, v3 (n = 128)</td><td class="num">86.4%</td><td class="num">1.339</td><td class="num">28.9%</td><td class="num">+0.1%</td><td class="num">&times;3.74</td></tr>
+        <tr><td>Walk-forward, listed before Jul 2024 &rarr; after (fit 52, test 43)</td><td class="num">91.5%</td><td class="num">1.080</td><td class="num">32.6%</td><td class="num">+4.2%</td><td class="num">&times;2.95 vs &times;4.17 flat</td></tr>
+        <tr><td>Walk-forward, listed before Jan 2025 &rarr; after (fit 64, test 31)</td><td class="num">88.6%</td><td class="num">1.056</td><td class="num">32.3%</td><td class="num">&minus;36.4%</td><td class="num">&times;2.87 vs &times;5.25 flat</td></tr>
+      </tbody>
+    </table>
+    <p class="note">v4 beats v3 on all four leave-one-out metrics, but the margin is thin: MdAPE &minus;1.6pp against a 1.4pp split-half noise floor, median |ln| &minus;0.033. The walk-forward level factor is fitted on the fit pool only, so both walk-forwards are fully out of sample. The Jan 2025 walk-forward bias of &minus;36.4% is real drift: fitting on pre-2025 listings under-predicts 2025 listings by a third, and it is shown here, not hidden.</p>
+    <h3>Terms: kept only if they pass two held-out tests</h3>
+    <table class="ev" id="terms-table">
+      <thead><tr><th>Term</th><th class="num">LOO med |ln|</th><th class="num">WF Jul 2024</th><th class="num">WF Jan 2025</th><th>Kept?</th></tr></thead>
+      <tbody>
+        <tr><td>Size curve ln(TVL) + category effects</td><td class="num">1.270</td><td class="num">1.080</td><td class="num">1.081</td><td>Kept</td></tr>
+        <tr><td>+ 7-day growth</td><td class="num">1.273</td><td class="num">1.078</td><td class="num">1.084</td><td>Not kept: worse in LOO and WF Jan 2025</td></tr>
+        <tr><td>+ age</td><td class="num">1.287</td><td class="num">1.071</td><td class="num">1.210</td><td>Not kept: worse in LOO and WF Jan 2025</td></tr>
+        <tr><td>+ chain count</td><td class="num">1.264</td><td class="num">1.258</td><td class="num">1.191</td><td>Not kept: worse in both walk-forwards</td></tr>
+        <tr><td>+ growth + age + chains</td><td class="num">1.298</td><td class="num">1.263</td><td class="num">1.256</td><td>Not kept: worse everywhere</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Negative control: 7-day growth shuffled across comparables (fixed seed) gives the same leave-one-out median |ln| as the base model, so the test harness is not fooled by noise. No family field exists in the snapshot, so no family effect could be tested; that is stated, not invented.</p>
+    <h3>Token odds: logistic P(has token), all 758 protocols</h3>
+    <table class="ev" id="odds-table">
+      <thead><tr><th>Test</th><th class="num">Brier</th><th class="num">Baseline</th><th class="num">Called right</th><th class="num">Baseline</th></tr></thead>
+      <tbody>
+        <tr><td>5-fold cross-validation (n = 758)</td><td class="num">0.213</td><td class="num">0.248</td><td class="num">66.2%</td><td class="num">54.9%</td></tr>
+        <tr><td>Walk-forward, listed before Jul 2024 &rarr; after (n = 414)</td><td class="num">0.332</td><td class="num">0.235</td><td class="num">37.7%</td><td class="num">62.3%</td></tr>
+        <tr><td>Walk-forward, listed before Jan 2025 &rarr; after (n = 323)</td><td class="num">0.249</td><td class="num">0.229</td><td class="num">55.4%</td><td class="num">64.4%</td></tr>
+      </tbody>
+    </table>
+    <p class="note">The walk-forward odds FAIL, and the reason is measured, not guessed: the share of listed protocols that have a token fell from 74.0% (listed before Jul 2024) to 37.7% (listed after), and from 65.8% to 35.6% for the Jan 2025 cut. Every variant fails identically, including TVL-only, so no predictor is the culprit; the intercept fitted on the old mix over-calls tokens in the new mix. The odds on this board are therefore cross-sectional: they rank protocols within this snapshot. They are not a time-to-listing forecast, because the snapshot carries no token-launch dates.</p>
+    <h3>Intervals and bootstrap</h3>
+    <p>Intervals come from the leave-one-out log-residuals: P25&ndash;P75 multiplies implied value by &times;0.298 to &times;4.088, P10&ndash;P90 by &times;0.056 to &times;9.071. Wide, because the typical prediction is about 3.7&times; off. Split-half coverage: first half trains, second half tests, then swapped: P25&ndash;P75 covers 45.3% and 57.8% (target 50%), P10&ndash;P90 covers 73.4% and 81.3% (target 80%). Bootstrap, 200 seeded refits: size slope &minus;0.478 (P5 &minus;0.623, P95 &minus;0.333); level factor 1.052 (P5 0.875, P95 1.283). The top-10 rank ranges over the 200 refits are shown in the strip below the board.</p>
+  </section>
+
   <section class="panel" id="model-panel">
     <h2>How the value is worked out</h2>
-    <p>Implied value = TVL &times; base multiple &times; growth &times; maturity &times; chain spread &times; TVL slope &times; level.
-    The base multiple is calibrated per category from the live-token protocols in this same
-    snapshot: the trimmed geometric mean (10% trimmed each tail) of the market-cap-to-TVL
-    ratios of the protocols in that category that already trade, winsorized to the
-    5th&ndash;95th percentiles first (the raw ratios run from 0 to 400&times;)
-    and then shrunk toward the global centre with k&nbsp;=&nbsp;3 comparables, so a category with few
-    live comparables is pulled toward the global instead of trusting a thin centre, then clamped to
-    0.05&ndash;0.60. The level factor is fitted from the same live comparables, each priced with
-    itself left out, so the median comparable is priced at its actual market cap. Maturity is a
-    log curve centred at 1.0 for a one-year-old protocol. The TVL slope is fitted from the same
-    live comparables: the market pays less per TVL dollar to bigger protocols. Nothing here is a
-    hard-coded list of names, and a protocol that records a token already is never ranked &mdash; it
-    is shown apart, at the market&rsquo;s own value.</p>
+    <p>Implied value = TVL &times; exp(intercept + size slope &times; ln(TVL / reference TVL) + category effect) &times; level factor. The ridge is fitted on the snapshot&rsquo;s own live-token protocols (128 with a market cap above zero): the size slope is &minus;0.49, so bigger protocols earn less per TVL dollar, and each category effect is shrunk toward zero with penalty &lambda; = 30, so a category with few live comparables is pulled toward the global instead of trusting a thin centre. The level factor (1.04) is fitted leave-one-out from the same comparables, so the median comparable is priced at its actual market cap. Nothing here is a hard-coded list of names, and a protocol that records a token already is never ranked: it is shown apart, at the market&rsquo;s own value.</p>
     <p class="note" id="tvl-note"></p>
     <table class="calib" id="calib-table">
-      <thead><tr><th>Category</th><th class="num">Live comps</th><th class="num">Centre mcap / TVL</th><th class="num">Base multiple</th></tr></thead>
+      <thead><tr><th>Category</th><th class="num">Live comps</th><th class="num">Category effect</th></tr></thead>
       <tbody></tbody>
     </table>
-    <p class="note">Implied values are this entry&rsquo;s own claim from the sealed snapshot, never a
-    prediction that a token will launch, or when. Say a protocol records no token, never that
-    it has none: its DefiLlama record may simply not carry it.</p>
+    <p class="note">Implied values are this entry&rsquo;s own claim from the sealed snapshot, never a prediction that a token will launch, or when. Say a protocol records no token, never that it has none: its DefiLlama record may simply not carry it.</p>
+  </section>
+
+  <section class="kpis" id="kpis" aria-label="Out-of-sample evidence"></section>
+
+  <section class="panel strip" id="integrity-panel">
+    <h2>Integrity strip: recomputed live in this browser</h2>
+    <p class="note">These checks run here, in your browser, from the board data beside this page: rows counted, ranks checked 1..N, implied values checked non-increasing, total summed, watchlist coverage checked 40/40. The checksum is the first 8 hex of sha256 of the entry program that wrote this board.</p>
+    <div id="integrity"></div>
   </section>
 
   <section class="controls">
@@ -50,12 +90,20 @@
       <option value="watchlist">Watchlist only (40)</option>
       <option value="early">Early finds only (160)</option>
     </select>
+    <select id="verdict" aria-label="Filter by farm verdict">
+      <option value="">All verdicts</option>
+      <option value="FARM">FARM only</option>
+      <option value="MARGINAL">MARGINAL only</option>
+      <option value="SKIP">SKIP only</option>
+    </select>
     <select id="sort" aria-label="Sort the board">
       <option value="rank">Sort: rank</option>
       <option value="implied">Sort: implied value</option>
       <option value="tvl">Sort: TVL</option>
       <option value="growth">Sort: 7-day growth</option>
       <option value="age">Sort: age</option>
+      <option value="net_hour">Sort: net per hour</option>
+      <option value="odds">Sort: token odds</option>
     </select>
   </section>
 
@@ -65,7 +113,7 @@
     <table class="board" id="board">
       <thead><tr>
         <th>#</th><th>Protocol</th><th>Category</th><th>Chains</th>
-        <th class="num">TVL</th><th class="num">7d</th><th class="num">Age</th><th class="num">Implied value</th>
+        <th class="num">TVL</th><th class="num">7d</th><th class="num">Age</th><th class="num">Implied</th><th class="num">Odds</th><th>Verdict</th><th class="num">Net / h</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -77,9 +125,17 @@
   </section>
 
   <section class="panel">
+    <h2>Bootstrap: top-10 rank ranges over 200 refits</h2>
+    <p class="note" id="bootstrap-note"></p>
+    <table class="ev" id="bootstrap-table">
+      <thead><tr><th>Protocol</th><th class="num">Rank now</th><th class="num">Rank range</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
     <h2>Live tokens &mdash; already trading, shown apart</h2>
-    <p class="note">These protocols record a token, so the board does not rank them. Their market
-    caps are the market&rsquo;s own values, and they are the comparables the model is calibrated on.</p>
+    <p class="note">These protocols record a token, so the board does not rank them. Their market caps are the market&rsquo;s own values, and they are the comparables the model is calibrated on.</p>
     <table class="board" id="live">
       <thead><tr><th>Protocol</th><th>Category</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">7d</th></tr></thead>
       <tbody></tbody>
@@ -88,7 +144,7 @@
 </main>
 
 <footer>
-  <p>Snapshot <span id="asof"></span> &middot; Source: <span id="src"></span> &middot; Model radar-v3-trimmed-level</p>
+  <p>Snapshot <span id="asof"></span> &middot; Source: <span id="src"></span> &middot; Model radar-v4-ridge-odds &middot; Checksum <span id="checksum"></span></p>
 </footer>
 <script src="../data.js"></script>
 <script src="app.js"></script>

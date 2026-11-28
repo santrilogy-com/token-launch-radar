@@ -1,25 +1,29 @@
-// Token Launch Radar v3 — entrypoint (Node 22, standard library only).
+// Token Launch Radar v4 — entrypoint (Node 22, standard library only).
 //
 // Reads the sealed DefiLlama snapshot from /input/snapshot.json (or
 // --input <snapshot.json|directory>), scores every pre-token protocol with
-// the calibrated model in lib/model.ts, and writes the ranked board to
+// the ridge model in lib/model.ts, and writes the ranked board to
 // /output/board.json. It also writes the dashboard's data as /output/data.js,
 // copies this repository's dashboard/ and screenshots/ into /output, and
 // writes /output/dossier.json with the vendored make.fun library, so the
 // scorer can rebuild it byte for byte.
 //
-// v3 model (radar-v3-trimmed-level): trimmed geometric mean of the winsorized
-// category ratios with shrinkage toward the global centre, a log maturity
-// curve centred at one year, a TVL slope fitted from the snapshot's own
-// live-token comparables, and a leave-one-out level factor that centres the
-// median comparable on its actual market cap — see lib/model.ts and
-// BUILD-v3.md for the leave-one-out backtest behind it.
+// v4 model (radar-v4-ridge-odds): ridge regression on ln(mcap/TVL) —
+// intercept + size curve ln(TVL) + ridge-shrunk category effects
+// (lambda = 30, tuned by leave-one-out) — plus a leave-one-out level
+// factor. Growth, age and chain count were each tested against two
+// held-out tests and failed; they are reported as tested-not-kept. The
+// entry program also measures its own evidence at build time (leave-one-out
+// and walk-forward metrics, token-odds Brier, interval coverage, 200
+// bootstrap refits) and embeds it in data.js, so the dashboard shows
+// numbers the program itself computed, never asserted.
 //
 // Run locally the same way the grader runs it, with MAKEFUN_OUTPUT_DIR:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
 // Run it twice and compare the two outputs: they must be byte-identical.
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync as copyFile, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
@@ -56,6 +60,12 @@ if (issue !== null) {
   process.exit(1);
 }
 
+// Integrity checksum: the first 8 hex of sha256 of this entry program.
+// It is computed from the file the grader runs, so it is identical on
+// every run of the same entry and changes if the program changes.
+const programHash = createHash('sha256').update(readFileSync(join(here, 'main.ts'))).digest('hex').slice(0, 8);
+radar.checksum = programHash;
+
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: board })}\n`);
 writeFileSync(join(out, 'data.js'), dataScript(radar));
@@ -69,7 +79,7 @@ function copyFiles(from: string, to: string): string[] {
     if (name.startsWith('.')) continue;
     const path = join(from, name);
     if (!statSync(path).isFile()) continue;
-    copyFileSync(path, join(to, name));
+    copyFile(path, join(to, name));
     copied.push(name);
   }
   return copied;
@@ -91,7 +101,15 @@ for (const name of shots) {
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
+const ev = radar.evidence;
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
-    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashFiles.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
+    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashFiles.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n` +
+    `token radar: checksum ${programHash} (sha256 of main.ts, first 8 hex)\n` +
+    `token radar: LOO MdAPE ${ev.value_loo.mdAPE}% med|ln| ${ev.value_loo.medLn} within2 ${ev.value_loo.within2}% bias ${ev.value_loo.bias}% miss x${ev.value_loo.miss} (n=${ev.value_loo.n})\n` +
+    `token radar: WF miss x${ev.value_wf1.miss} vs flat x${ev.flat_miss.wf1} (cut 2024-07-01), x${ev.value_wf2.miss} vs flat x${ev.flat_miss.wf2} (cut 2025-01-01)\n` +
+    `token radar: odds 5-fold Brier ${ev.odds_brier_5fold} vs baseline ${ev.odds_baseline_brier}, called right ${ev.odds_called_right}% vs ${ev.odds_baseline_called}%\n` +
+    `token radar: odds walk-forward Brier ${ev.odds_wf1.brier} / ${ev.odds_wf2.brier} vs baseline ${ev.odds_wf1.baseline} / ${ev.odds_wf2.baseline} (FAILS: base-rate shift ${ev.odds_base_rate_shift.cut1_fit}% -> ${ev.odds_base_rate_shift.cut1_test}%)\n` +
+    `token radar: interval coverage P25-P75 ${ev.coverage_a_to_b.p50}% / ${ev.coverage_b_to_a.p50}%, P10-P90 ${ev.coverage_a_to_b.p80}% / ${ev.coverage_b_to_a.p80}% (targets 50% / 80%)\n` +
+    `token radar: ledger ${ev.ledger.total} = ${ev.ledger.ranked} ranked + ${ev.ledger.has_token} token + ${ev.ledger.pre_token_not_ranked} pre-token not ranked; farm ${ev.farm_counts.farm} FARM / ${ev.farm_counts.marginal} MARGINAL / ${ev.farm_counts.skip} SKIP\n`,
 );
