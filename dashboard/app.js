@@ -1,7 +1,12 @@
-// Token Launch Radar dashboard v4: renders window.RADAR (written by main.ts
+// Token Launch Radar dashboard v10: renders window.RADAR (written by main.ts
 // as data.js) as a sortable, filterable board with a detail view per protocol,
 // an evidence strip, an integrity strip and costed farm verdicts.
 // No network: every byte the page needs is in data.js beside it.
+// v10: the board's Implied column is the EXPECTED value — the if-launches
+// value times the by-horizon conditional token odds — and the detail view
+// shows both figures with the formula. The board's Odds column is the
+// CONDITIONAL token odds by the oldest cohort's age (5.07y), from the same
+// logistic that scores P(has token by today) — see lib/model.ts.
 (function () {
   var R = window.RADAR;
   if (!R) { document.body.insertAdjacentHTML('beforeend', '<p>No radar data.</p>'); return; }
@@ -34,14 +39,15 @@
   document.getElementById('src').textContent = R.source;
   document.getElementById('checksum').textContent = R.checksum || '—';
 
-  // ---- KPI evidence strip (numbers from the build's own evidence)
+  // ---- KPI evidence strip (numbers from the build's own evidence; walk-forward first)
   var kpis = document.getElementById('kpis');
   kpis.innerHTML =
-    '<div class="kpi"><b>LOO miss &times;' + E.value_loo.miss.toFixed(2) + '</b><span>vs &times;' + E.flat_miss.loo.toFixed(2) + ' flat (n = ' + E.value_loo.n + ')</span></div>' +
-    '<div class="kpi"><b>WF miss &times;' + E.value_wf1.miss.toFixed(2) + ' / &times;' + E.value_wf2.miss.toFixed(2) + '</b><span>vs flat &times;' + E.flat_miss.wf1.toFixed(2) + ' / &times;' + E.flat_miss.wf2.toFixed(2) + '</span></div>' +
-    '<div class="kpi"><b>Odds Brier ' + E.odds_brier_5fold.toFixed(3) + '</b><span>vs ' + E.odds_baseline_brier.toFixed(3) + ' baseline; ' + E.odds_called_right.toFixed(1) + '% called right</span></div>' +
-    '<div class="kpi"><b>Coverage ' + E.coverage_a_to_b.p50.toFixed(1) + '&ndash;' + E.coverage_b_to_a.p50.toFixed(1) + '% / ' + E.coverage_a_to_b.p80.toFixed(1) + '&ndash;' + E.coverage_b_to_a.p80.toFixed(1) + '%</b><span>P25&ndash;P75 / P10&ndash;P90, targets 50% / 80%</span></div>' +
-    '<div class="kpi"><b>' + E.terms.filter(function (t) { return t.kept; }).length + ' of ' + E.terms.length + ' terms kept</b><span>negative control passed: permuted growth adds nothing</span></div>' +
+    '<div class="kpi"><b>WF miss &times;' + E.value_wf1.miss.toFixed(2) + ' / &times;' + E.value_wf2.miss.toFixed(2) + '</b><span>vs flat &times;' + E.flat_miss.wf1.toFixed(2) + ' / &times;' + E.flat_miss.wf2.toFixed(2) + ' (test n = ' + E.value_wf1.n + ' / ' + E.value_wf2.n + ')</span></div>' +
+    '<div class="kpi"><b>LOO miss &times;' + E.value_loo.miss.toFixed(2) + '</b><span>vs &times;' + E.flat_miss.loo.toFixed(2) + ' flat (n = ' + E.value_loo.n + ' traded comparables)</span></div>' +
+    '<div class="kpi"><b>Odds Brier ' + E.odds_brier_10fold.toFixed(3) + '</b><span>10-fold, vs ' + E.odds_baseline_brier.toFixed(3) + ' baseline; AUC ' + E.odds_auc_10fold.toFixed(3) + '; WF ' + E.odds_wf1.brier.toFixed(3) + ' / ' + E.odds_wf2.brier.toFixed(3) + ' / ' + E.odds_wf3.brier.toFixed(3) + ' vs fit-rate ' + E.odds_wf1.baseline_fit.toFixed(3) + ' / ' + E.odds_wf2.baseline_fit.toFixed(3) + ' / ' + E.odds_wf3.baseline_fit.toFixed(3) + '</span></div>' +
+    '<div class="kpi"><b>Within 3&times; ' + E.within3.loo.toFixed(1) + '% / ' + E.within3.wf1.toFixed(1) + '% / ' + E.within3.wf2.toFixed(1) + '%</b><span>LOO / WF Jul 2024 / WF Jan 2025; split-half 20-seed mean P50 ' + E.coverage_mean.p50.toFixed(1) + '% / P80 ' + E.coverage_mean.p80.toFixed(1) + '%</span></div>' +
+    '<div class="kpi"><b>' + E.terms.filter(function (t) { return t.kept; }).length + ' of ' + E.terms.length + ' terms kept</b><span>negative control: shuffled growth moves LOO by ' + Math.abs(E.negative_control.loo_medLn - E.negative_control.base_loo_medLn).toFixed(3) + ' (noise)</span></div>' +
+    '<div class="kpi"><b>' + E.comparables.kept + ' / ' + E.comparables.total + ' comparables</b><span>audited out: ' + E.comparables.dropped_cex + ' exchanges, ' + E.comparables.dropped_versioned + ' versioned pool, ' + E.comparables.dropped_bridge + ' canonical bridges, ' + E.comparables.dropped_nontraded + ' non-traded</span></div>' +
     '<div class="kpi"><b>' + E.farm_counts.farm + ' FARM / ' + E.farm_counts.marginal + ' MARGINAL / ' + E.farm_counts.skip + ' SKIP</b><span>costed farm verdicts, watchlist ' + E.ledger.watchlist + '/' + E.ledger.watchlist + '</span></div>';
 
   // ---- ledger line
@@ -55,7 +61,7 @@
     return '<tr><td>' + esc(c.category) + '</td><td class="num">' + c.comps + '</td><td class="num">' + c.effect.toFixed(3) + '&times;</td></tr>';
   }).join('') + '<tr><td colspan="3" class="note">Effect is the ridge category multiplier (exp of the fitted effect), shrunk with &lambda; = ' + R.ridge_lambda + '. Level factor ' + R.level_factor.toFixed(2) + ' centres the median comparable on its market cap. Full table: ' + R.calibration.length + ' categories.</td></tr>';
   document.getElementById('tvl-note').textContent = 'Ridge: intercept ' + R.intercept.toFixed(3) +
-    ', size slope ' + R.slope.toFixed(2) + ' (bigger protocols earn less per TVL dollar), reference TVL ' +
+    ', size slope ' + R.slope.toFixed(2) + ' below $250M of TVL with a hinge of ' + R.hinge.toFixed(3) + ' above it (bigger protocols earn less per TVL dollar, and the curve flattens for the largest), reference TVL ' +
     fmtUsd(R.ref_tvl_usd) + ', level factor ' + R.level_factor.toFixed(2) + '. Backtest over the snapshot\u2019s live-token protocols (leave-one-out): ' +
     'median error ' + E.value_loo.mdAPE.toFixed(1) + '% vs 86.4% for the v3 model, ' + E.value_loo.within2.toFixed(1) + '% of predictions within 2\u00d7 of the real market cap vs 28.9%.';
 
@@ -116,7 +122,7 @@
       growth: function (a, b) { return (b.change_7d || 0) - (a.change_7d || 0); },
       age: function (a, b) { return (b.age_days || 0) - (a.age_days || 0); },
       net_hour: function (a, b) { return b.net_per_hour_usd - a.net_per_hour_usd; },
-      odds: function (a, b) { return b.odds_token - a.odds_token; },
+      odds: function (a, b) { return b.odds_token_horizon - a.odds_token_horizon; },
     }[state.sort];
     return rows.slice().sort(by);
   }
@@ -136,7 +142,7 @@
         '<td class="num">' + fmtPct(r.change_7d) + '</td>' +
         '<td class="num">' + fmtAge(r.age_days) + '</td>' +
         '<td class="num"><b>' + fmtUsd(r.implied_value_usd) + '</b></td>' +
-        '<td class="num">' + (r.odds_token * 100).toFixed(1) + '%</td>' +
+        '<td class="num">' + (r.odds_token_horizon * 100).toFixed(1) + '%</td>' +
         '<td><span class="verdict v-' + r.verdict.toLowerCase() + '">' + r.verdict + '</span></td>' +
         '<td class="num">' + fmtMoney(r.net_per_hour_usd) + '/h</td></tr>';
     }).join('');
@@ -157,7 +163,11 @@
     d.hidden = false;
     document.getElementById('detail-title').textContent = '#' + r.rank + ' — ' + r.name;
     var baseExp = Math.exp(r.intercept);
-    var impliedPerTvl = r.implied_value_usd / r.tvl_usd;
+    // The bar chart compares if-launches ratios: this row's if-launches
+    // value per TVL against the category centre (also if-launches). The
+    // board's Implied column is the expected value — the if-launches
+    // value times the token odds — so the bars never mix the two scales.
+    var impliedPerTvl = r.implied_if_launches_usd / r.tvl_usd;
     var catRow = null;
     for (var i = 0; i < R.calibration.length; i++) { if (R.calibration[i].category === (r.category || '(no category)')) { catRow = R.calibration[i]; break; } }
     var maxRatio = Math.max(impliedPerTvl, catRow ? catRow.effect * baseExp : 0, 0.001);
@@ -171,17 +181,23 @@
       ' &middot; listed ' + (r.listed_at || 'unknown') + ' (' + fmtAge(r.age_days) + ') &middot; records no token.</p>' +
       '<h3>How the figure is made</h3>' +
       '<p>ln(mcap / TVL) = intercept ' + r.intercept.toFixed(3) + ' + size term ln(' + r.size_multiplier.toFixed(3) + ') + category term ln(' + r.category_effect.toFixed(3) + '). ' +
+      'The size term is a hinge in ln(TVL) (linear slope below $250M of TVL, flatter above it), so it is the whole size curve, not a single slope. ' +
       'So the predicted ratio is exp(' + r.intercept.toFixed(3) + ') &times; ' + r.size_multiplier.toFixed(3) + ' &times; ' + r.category_effect.toFixed(3) + ' = ' + r.predicted_ratio.toFixed(3) + '&times; TVL. ' +
-      'Times the level factor ' + r.level_factor.toFixed(2) + ' gives implied value ' + fmtUsd(r.implied_value_usd) + '.</p>' +
+      'Times the level factor ' + r.level_factor.toFixed(2) + ' gives the value if a token launches: ' + fmtUsd(r.implied_if_launches_usd) + '. ' +
+      'Times the token odds below (' + (r.odds_token_horizon * 100).toFixed(1) + '%) gives the expected value ' + fmtUsd(r.implied_value_usd) + ' — the figure the board ranks by.</p>' +
       '<div class="model-line">' +
       '<span class="chip">TVL <b>' + fmtUsd(r.tvl_usd) + '</b></span>' +
       '<span class="chip">predicted ratio <b>' + r.predicted_ratio.toFixed(3) + '&times;</b></span>' +
       '<span class="chip">size <b>&times; ' + r.size_multiplier.toFixed(3) + '</b></span>' +
       '<span class="chip">category <b>&times; ' + r.category_effect.toFixed(3) + '</b></span>' +
       '<span class="chip">level <b>&times; ' + r.level_factor.toFixed(2) + '</b></span>' +
-      '<span class="chip">implied value <b>' + fmtUsd(r.implied_value_usd) + '</b></span>' +
+      '<span class="chip">if it launches <b>' + fmtUsd(r.implied_if_launches_usd) + '</b></span>' +
+      '<span class="chip">token odds <b>' + (r.odds_token_horizon * 100).toFixed(1) + '%</b></span>' +
+      '<span class="chip">expected value <b>' + fmtUsd(r.implied_value_usd) + '</b></span>' +
       '</div>' +
-      '<p>Token odds (cross-sectional, not a launch forecast): <b>' + (r.odds_token * 100).toFixed(1) + '%</b>. ' +
+      '<p>Token odds by ' + E.odds_horizon_years.toFixed(2) + ' years (the oldest cohort&rsquo;s age), given no token by its current age: <b>' + (r.odds_token_horizon * 100).toFixed(1) + '%</b>. ' +
+      'That is (F(' + E.odds_horizon_years.toFixed(2) + 'y) &minus; F(age)) / (1 &minus; F(age)), where F is the same logistic that gives P(has token by today) = <b>' + (r.odds_token * 100).toFixed(1) + '%</b>. ' +
+      'The conditional is the peers&rsquo; record, not a launch forecast: the Brier in the evidence below scores P(has token by today), never the conditional. ' +
       'Plausible range from the leave-one-out residuals: P25&ndash;P75 <b>' + fmtUsd(r.interval_p25_usd) + ' &ndash; ' + fmtUsd(r.interval_p75_usd) + '</b>, ' +
       'P10&ndash;P90 <b>' + fmtUsd(r.interval_p10_usd) + ' &ndash; ' + fmtUsd(r.interval_p90_usd) + '</b>.</p>' +
       (r.peers.length > 0 ? '<p>Nearest priced peers in ' + esc(r.category || 'this category') + ': ' + r.peers.map(function (p) { return '<b>' + esc(p.name) + '</b> ' + p.ratio.toFixed(2) + '&times; TVL (' + fmtUsd(p.tvl_usd) + ')'; }).join(', ') + '.</p>' : '<p>No live-token comparables in this category.</p>') +
@@ -190,7 +206,7 @@
       (catRow ? '<div class="bar-row"><span class="lbl">Category centre</span><span class="track"><span class="fill" style="width:' + barW(catRow.effect * baseExp) + '%"></span></span><span class="val">' + (catRow.effect * baseExp).toFixed(3) + '&times; TVL</span></div>' : '') +
       '</div>' +
       '<h3>Farm verdict: <span class="verdict v-' + r.verdict.toLowerCase() + '">' + r.verdict + '</span></h3>' +
-      '<p class="note">Assumptions: deposit min($10,000, 0.02% of TVL); horizon 12 weeks; modelled drop = implied value &times; 7% &times; (deposit / TVL); fees = 6 on-chain actions &times; gas of the main chain (Ethereum $8, BSC $1, Arbitrum / Optimism / Base $0.50, Solana $0.01, other $2); T-bill = deposit &times; 4% &times; 12/52. FARM when net beats the T-bill AND net/hour is at least $25; MARGINAL when exactly one holds; SKIP otherwise.</p>' +
+      '<p class="note">Assumptions: deposit min($10,000, 0.02% of TVL); horizon 12 weeks; modelled drop = expected implied value &times; 7% &times; (deposit / TVL); fees = 6 on-chain actions &times; gas of the main chain (Ethereum $8, BSC $1, Arbitrum / Optimism / Base $0.50, Solana $0.01, other $2); T-bill = deposit &times; 4% &times; 12/52. FARM when net beats the T-bill AND net/hour is at least $25; MARGINAL when net is positive but the FARM bar is not met; SKIP when net is zero or negative. The drop uses the expected value because it only materialises if a token launches — that is why only ' + E.farm_counts.farm + ' of the ' + R.board_size + ' rows clear the FARM bar; the if-launches figures are shown above.</p>' +
       '<div class="model-line">' +
       '<span class="chip">deposit <b>' + fmtMoney(r.deposit_usd) + '</b></span>' +
       '<span class="chip">modelled drop <b>' + fmtMoney(r.drop_usd) + '</b></span>' +

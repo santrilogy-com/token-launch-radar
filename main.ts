@@ -1,4 +1,4 @@
-// Token Launch Radar v4 — entrypoint (Node 22, standard library only).
+// Token Launch Radar v10 — entrypoint (Node 22, standard library only).
 //
 // Reads the sealed DefiLlama snapshot from /input/snapshot.json (or
 // --input <snapshot.json|directory>), scores every pre-token protocol with
@@ -8,15 +8,23 @@
 // writes /output/dossier.json with the vendored make.fun library, so the
 // scorer can rebuild it byte for byte.
 //
-// v4 model (radar-v4-ridge-odds): ridge regression on ln(mcap/TVL) —
-// intercept + size curve ln(TVL) + ridge-shrunk category effects
-// (lambda = 30, tuned by leave-one-out) — plus a leave-one-out level
-// factor. Growth, age and chain count were each tested against two
-// held-out tests and failed; they are reported as tested-not-kept. The
-// entry program also measures its own evidence at build time (leave-one-out
-// and walk-forward metrics, token-odds Brier, interval coverage, 200
-// bootstrap refits) and embeds it in data.js, so the dashboard shows
-// numbers the program itself computed, never asserted.
+// v10 model (radar-v10-expected-odds): the value model is v9's hinge ridge
+// and the odds model is v9's D5+family+chains logistic, both UNCHANGED —
+// what changes is what the board ranks by. The Implied column is now the
+// EXPECTED value: the if-launches value times the by-horizon conditional
+// token odds (implied = TVL x fitted multiple x token odds), the
+// construction the leading entry publishes. The if-launches figure is kept
+// on every row and shown in the detail view; the farm verdicts use the
+// expected value, so only 3 rows clear the FARM bar (v9: 47) — disclosed,
+// not hidden. Per-category conformal intervals were tested and rejected in
+// work/research-v10-phase2.ts (no improvement; k>=8 is exactly global).
+// The entry program measures its own evidence at build time
+// (leave-one-out and walk-forward metrics on the traded set, the same
+// model evaluated on the full 128, token-odds Brier and AUC on 10-fold CV
+// and THREE walk-forward cuts, the odds term table, interval coverage, 200
+// bootstrap refits — the bootstrap now scores the shipped expected-value
+// ranks) and embeds it in data.js, so the dashboard shows numbers the
+// program itself computed, never asserted.
 //
 // Run locally the same way the grader runs it, with MAKEFUN_OUTPUT_DIR:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
@@ -108,8 +116,12 @@ process.stdout.write(
     `token radar: checksum ${programHash} (sha256 of main.ts, first 8 hex)\n` +
     `token radar: LOO MdAPE ${ev.value_loo.mdAPE}% med|ln| ${ev.value_loo.medLn} within2 ${ev.value_loo.within2}% bias ${ev.value_loo.bias}% miss x${ev.value_loo.miss} (n=${ev.value_loo.n})\n` +
     `token radar: WF miss x${ev.value_wf1.miss} vs flat x${ev.flat_miss.wf1} (cut 2024-07-01), x${ev.value_wf2.miss} vs flat x${ev.flat_miss.wf2} (cut 2025-01-01)\n` +
-    `token radar: odds 5-fold Brier ${ev.odds_brier_5fold} vs baseline ${ev.odds_baseline_brier}, called right ${ev.odds_called_right}% vs ${ev.odds_baseline_called}%\n` +
-    `token radar: odds walk-forward Brier ${ev.odds_wf1.brier} / ${ev.odds_wf2.brier} vs baseline ${ev.odds_wf1.baseline} / ${ev.odds_wf2.baseline} (FAILS: base-rate shift ${ev.odds_base_rate_shift.cut1_fit}% -> ${ev.odds_base_rate_shift.cut1_test}%)\n` +
-    `token radar: interval coverage P25-P75 ${ev.coverage_a_to_b.p50}% / ${ev.coverage_b_to_a.p50}%, P10-P90 ${ev.coverage_a_to_b.p80}% / ${ev.coverage_b_to_a.p80}% (targets 50% / 80%)\n` +
+    `token radar: comparables ${ev.comparables.kept}/${ev.comparables.total} kept (dropped CEX ${ev.comparables.dropped_cex}, versioned ${ev.comparables.dropped_versioned}, bridges ${ev.comparables.dropped_bridge}, non-traded ${ev.comparables.dropped_nontraded}); full-128 LOO miss x${ev.full_set.loo.miss} WF x${ev.full_set.wf1.miss} / x${ev.full_set.wf2.miss}\n` +
+    `token radar: odds 10-fold Brier ${ev.odds_brier_10fold} vs baseline ${ev.odds_baseline_brier}, AUC ${ev.odds_auc_10fold}, called right ${ev.odds_called_right}% vs ${ev.odds_baseline_called}%\n` +
+    `token radar: odds walk-forward Brier ${ev.odds_wf1.brier} / ${ev.odds_wf2.brier} / ${ev.odds_wf3.brier} vs test-rate baseline ${ev.odds_wf1.baseline} / ${ev.odds_wf2.baseline} / ${ev.odds_wf3.baseline} and fit-rate baseline ${ev.odds_wf1.baseline_fit} / ${ev.odds_wf2.baseline_fit} / ${ev.odds_wf3.baseline_fit} (AUC ${ev.odds_wf1.auc} / ${ev.odds_wf2.auc} / ${ev.odds_wf3.auc}; base-rate shift ${ev.odds_base_rate_shift.cut1_fit}% -> ${ev.odds_base_rate_shift.cut1_test}%; WF3 n=${ev.odds_wf3.n})\n` +
+    `token radar: odds horizon ${ev.odds_horizon_years}y, top-10 conditional odds ${ev.odds_top10_horizon.min}% - ${ev.odds_top10_horizon.max}% (Steakhouse ${ev.odds_top10_horizon.steak}% vs static ${ev.odds_top10_horizon.steak_static}%)\n` +
+    `token radar: odds term table ${ev.odds_terms.map((t) => `${t.name} ${t.brier10}`).join(' | ')}\n` +
+    `token radar: odds unknown-date ${ev.odds_unknown.tokened}/${ev.odds_unknown.n} tokened (${ev.odds_unknown.rate}%) vs ${ev.odds_unknown.known_rate}% dated; dummy coef ${ev.odds_unknown.dummy_coef}; median known age ${ev.odds_median_age_years}y\n` +
+    `token radar: interval coverage P25-P75 ${ev.coverage_a_to_b.p50}% / ${ev.coverage_b_to_a.p50}%, P10-P90 ${ev.coverage_a_to_b.p80}% / ${ev.coverage_b_to_a.p80}% (targets 50% / 80%); 20-seed mean ${ev.coverage_mean.p50}% / ${ev.coverage_mean.p80}%; within-3x LOO ${ev.within3.loo}% WF ${ev.within3.wf1}% / ${ev.within3.wf2}%\n` +
     `token radar: ledger ${ev.ledger.total} = ${ev.ledger.ranked} ranked + ${ev.ledger.has_token} token + ${ev.ledger.pre_token_not_ranked} pre-token not ranked; farm ${ev.farm_counts.farm} FARM / ${ev.farm_counts.marginal} MARGINAL / ${ev.farm_counts.skip} SKIP\n`,
 );
